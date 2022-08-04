@@ -1,0 +1,218 @@
+---
+title: "IndiaError"
+author: "Ujjal"
+date: "July 27, 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=TRUE}
+d = read.csv("ErrorResidualIndia.csv")
+d = d[order(d$State_District),]
+d$Date = as.Date(d$Date, format = "%m/%d/%Y")
+d$Days = as.numeric(d$Date - min(d$Date))
+head(d)
+```
+
+
+
+
+```{r, echo=TRUE}
+CutOff = as.numeric(as.Date("3/31/2021", format = "%m/%d/%Y") - min(d$Date))
+CutOff
+```
+
+
+
+
+```{r, echo=TRUE}
+library(ggplot2)
+District = unique(d$District_ID)
+pdf("India_Residual_Plot_geom.pdf")
+for(i in 1:length(District)){
+  ind = which(d$District_ID == District[i])
+  dt = d[ind,]
+  g = ggplot(dt, aes(x = Days, y = resid)) + geom_line(color = "red", size = 1) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 1) + 
+    geom_vline(xintercept = CutOff, linetype = "dotted", color = "blue", size = 2) + xlab("Day") + 
+    ylab("Residual") + ggtitle(paste(dt$State_District))
+   plot(g) 
+  #plot(dt$Days, dt$resid, type = "l", col = 2, main = paste(unique(dt$State_District)))
+  #lines(c(CutOff,CutOff), c(min(dt$resid), max(dt$resid)), col = 4, lty = 2, lwd = 2)
+  #lines(c(min(dt$Days), max(dt$Days)), c(0,0), col = 1, lty = 1, lwd = 1)
+}
+dev.off()
+```
+
+
+
+```{r, echo=TRUE}
+Log_Lik_Rat = function(x, cutoff, stop, prior){
+  ind1 = c(max(1,cutoff - prior):cutoff)
+  ind2 = c(cutoff:min(length(x),(cutoff+stop)))
+  x1 = x[ind1]
+  x2 = x[ind2]
+  s1 = sd(x1)
+  s2 = sd(x2)
+  ll = 0
+  for(i in 1:length(x2)){
+    ll = ll + log(min(.Machine$integer.max, dnorm(x2[i], mean = 0, sd = s2)/dnorm(x2[i], mean = 0, sd = s1)))
+  }
+  p = 1 - pchisq(ll, 1)
+  return(c(ll, p))
+}
+```
+
+
+
+```{r, echo=TRUE}
+ct = seq(35,5,-1)
+for(j in 1:length(ct)){
+ll = c()
+pval = c()
+DistrictName = c()
+for(i in 1:length(District)){
+  ind = which(d$District_ID == District[i])
+  dt = d[ind,]
+  dl = Log_Lik_Rat(dt$resid, cutoff = CutOff, stop = ct[j], prior = 35)
+  ll = c(ll, dl[1])
+  pval = c(pval, dl[2])
+  DistrictName = c(DistrictName, unique(dt$State_District))
+}
+if(j == 1){
+out = as.data.frame(cbind(District, DistrictName, ll, pval))
+colnames(out) = c("District_ID", "State_District", 
+                  paste("Log_Lik_Ratio_Stop_",ct[j],sep = ""), paste("pValue_Stop_", ct[j], sep=""))
+}else{
+  out = cbind(out, ll, pval)
+  colnames(out)[c(3+2*(j-1), 4+2*(j-1))] = c(paste("Log_Lik_Ratio_Stop_",ct[j],sep = ""), 
+                                             paste("pValue_Stop_", ct[j], sep=""))
+}
+}
+write.csv(out, "Change_Point_Test.csv", quote=FALSE, row.names = FALSE)
+```
+
+
+
+```{r, echo=TRUE}
+library(mvtnorm)
+dx = reshape(d[,c(1,4,5)], idvar = "Days", timevar = "District_ID", direction = "wide")
+ct = seq(35,5,-1)
+Stop = c()
+LogLik = c()
+pValue = c()
+for(j in 1:length(ct)){
+ind1 = which(dx$Days <= CutOff & dx$Days >= CutOff - 35)
+ind2 = which(dx$Days >= CutOff & dx$Days <= CutOff + ct[j])
+x1 = dx[ind1, -1]
+x2 = dx[ind2, -1]
+S1 = diag(apply(x1,2,FUN=var))
+S2 = diag(apply(x2,2,FUN=var))
+ll = 0
+for(i in 1:dim(x2)[1]){
+  ll = ll + dmvnorm(x2[i,],mean = rep(0, dim(x2)[2]), sigma = S2, log = TRUE) -
+            dmvnorm(x2[i,],mean = rep(0, dim(x2)[2]), sigma = S1, log = TRUE)
+}
+pVal = 1 - pchisq(ll, df = dim(x2)[2])
+Stop = c(Stop, ct[j])
+LogLik = c(LogLik, ll[[1]])
+pValue = c(pValue, pVal[[1]])
+}
+out1 = as.data.frame(cbind(Stop, LogLik, pValue))
+```
+
+
+
+```{r, echo=TRUE}
+library(mvtnorm)
+dx = reshape(d[,c(1,4,5)], idvar = "Days", timevar = "District_ID", direction = "wide")
+ct = seq(20,3,-1)
+st = seq(300,350,1)
+LogLikMat = matrix(ncol = length(ct), nrow = length(st))
+pValueMat = matrix(ncol = length(ct), nrow = length(st))
+for(k in 1:length(st)){
+Stop = c()
+LogLik = c()
+pValue = c()
+for(j in 1:length(ct)){
+ind1 = which(dx$Days <= st[k] & dx$Days >= st[k] - 35)
+ind2 = which(dx$Days >= st[k] & dx$Days <= st[k] + ct[j])
+x1 = dx[ind1, -1]
+x2 = dx[ind2, -1]
+S1 = diag(apply(x1,2,FUN=var))
+S2 = diag(apply(x2,2,FUN=var))
+ll = 0
+for(i in 1:dim(x2)[1]){
+  ll = ll + dmvnorm(x2[i,],mean = rep(0, dim(x2)[2]), sigma = S2, log = TRUE) -
+            dmvnorm(x2[i,],mean = rep(0, dim(x2)[2]), sigma = S1, log = TRUE)
+}
+pVal = 1 - pchisq(ll, df = dim(x2)[2])
+Stop = c(Stop, ct[j])
+LogLik = c(LogLik, ll[[1]])
+pValue = c(pValue, pVal[[1]])
+LogLikMat[k,j] = ll[[1]]
+pValueMat[k,j] = pval[[1]]
+}
+}
+colnames(LogLikMat) = ct
+rownames(LogLikMat) = st
+colnames(pValueMat) = ct
+rownames(pValueMat) = st
+write.csv(LogLikMat, "LogLikMat.csv", quote = FALSE, row.names = TRUE)
+write.csv(pValueMat, "pValueMat.csv", quote = FALSE, row.names = TRUE)
+```
+
+
+
+
+```{r, echo=TRUE}
+library(ggplot2)
+st = seq(300,355)
+District = unique(d$District_ID)
+pdf("India_Residual_Plot_geom_with_Change_Point.pdf")
+for(i in 1:length(District)){
+  ind = which(d$District_ID == District[i])
+  dt = d[ind,]
+  ll = c()
+  for(k in 1:length(st)){
+    dl = Log_Lik_Rat(dt$resid, cutoff = st[k], stop = 15, prior = 35)
+    ll = c(ll, dl[1])
+  }
+  Ctm = st[which(ll == max(ll))][1]
+  g = ggplot(dt, aes(x = Days, y = resid)) + geom_line(color = "red", size = 1) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 1) + 
+    geom_vline(xintercept = CutOff, linetype = "dotted", color = "blue", size = 1) + xlab("Day") + 
+    geom_vline(xintercept = Ctm, linetype = "dashed", color = "black", size = 1) +
+    ylab("Residual") + ggtitle(paste(dt$State_District, ": Optimal Change Point: ", 
+                                     sort(unique(d$Date), decreasing = FALSE)[Ctm]))
+   plot(g) 
+  #plot(dt$Days, dt$resid, type = "l", col = 2, main = paste(unique(dt$State_District)))
+  #lines(c(CutOff,CutOff), c(min(dt$resid), max(dt$resid)), col = 4, lty = 2, lwd = 2)
+  #lines(c(min(dt$Days), max(dt$Days)), c(0,0), col = 1, lty = 1, lwd = 1)
+}
+dev.off()
+```
+
+
+
+
+```{r, echo=TRUE}
+dx = reshape(d[,c(1,4,5)], idvar = "Days", timevar = "District_ID", direction = "wide")
+png("All_Districts_Change_Point.png", width = 1680, height = 960)
+g = ggplot(d, aes(x = Days, y = resid, group = Days)) +
+  geom_boxplot(color = "red", outlier.shape = ".", size = 1, outlier.size = 2) +
+  xlab("Days since May 01, 2020") + ylab("Residuals") +
+  ggtitle("Start of Kumbh Mela (Blue dotted): April 01, 2021; Optimal Change Point (Black dashed): April 06, 2021.") +
+  ylim(-0.0005, 0.0005) + geom_vline(xintercept = 334, linetype = "dotted", color = "blue", size = 2) +
+  geom_vline(xintercept = 339, linetype = "dashed", color = "black", size = 2) + theme(axis.text=element_text(face="bold", size = 30),
+        axis.title=element_text(face="bold", size = 30),
+        plot.title = element_text(size=30))
+plot(g)
+dev.off()
+```
+
+
